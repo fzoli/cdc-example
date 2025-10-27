@@ -1,0 +1,7 @@
+POST http://localhost:8080/api/messages
+Content-Type: application/json
+
+{
+  "username": "a",
+  "message": "Boo"
+}

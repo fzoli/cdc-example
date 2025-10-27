@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: cdc
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    driver-class-name: org.postgresql.Driver
+  kafka:
+    consumer:
+      group-id: messages-consumer-${system.hostname} # ${random.uuid} could be used as well to make each instance use a different group id
+      auto-offset-reset: latest
