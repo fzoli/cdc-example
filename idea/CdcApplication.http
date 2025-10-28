@@ -5,3 +5,7 @@ Content-Type: application/json
   "username": "a",
   "message": "Boo"
 }
+
+###
+
+WEBSOCKET ws://localhost:8080/ws/messages
