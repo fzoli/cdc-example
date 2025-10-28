@@ -59,22 +59,6 @@ class CdcApplicationTests @Autowired constructor(
         val note = Vector<Pair<Instant, Long>>()
         val executor = Executors.newVirtualThreadPerTaskExecutor()
         val latch = CountDownLatch(10)
-        repeat(10) {
-            executor.submit {
-                randomAccess(note)
-                latch.countDown()
-            }
-        }
-        latch.await()
-        assertThat(note.size).isEqualTo(40)
-        for (i in 0 until note.size - 1) {
-            val current = note[i].first
-            val next = note[i + 1].first
-            assertThat(next).isAfter(current)
-        }
-    }
-
-    private fun randomAccess(note: Vector<Pair<Instant, Long>>) {
         val props = Properties().apply {
             this["bootstrap.servers"] = "${kafka.host}:${kafka.getMappedPort(9092)}"
             this["enable.auto.commit"] = "false"
@@ -84,18 +68,35 @@ class CdcApplicationTests @Autowired constructor(
             this["max.poll.records"] = "1"
             this["default.api.timeout.ms"] = "3000"
         }
-
-        val tp = TopicPartition("messages.public.messages", 0)
-        val records = KafkaConsumer<String, String>(props).use { consumer ->
+        KafkaConsumer<String, String>(props).use { consumer ->
+            val tp = TopicPartition("messages.public.messages", 0)
             consumer.assign(listOf(tp))
-            fun read(offset: Long): ConsumerRecord<String, String>? {
-                consumer.seek(tp, offset)
-                val records = consumer.poll(Duration.ofMillis(100))
-                note.add(Pair(Instant.now(), offset))
-                return records.firstOrNull()
+            repeat(10) {
+                executor.submit {
+                    randomAccess(consumer, tp, note)
+                    latch.countDown()
+                }
             }
-            listOf(read(0), read(1), read(2), read(0))
+            latch.await()
         }
+        assertThat(note.size).isEqualTo(40)
+        for (i in 0 until note.size - 1) {
+            val current = note[i].first
+            val next = note[i + 1].first
+            assertThat(next).isAfter(current)
+        }
+    }
+
+    private fun randomAccess(consumer: KafkaConsumer<String, String>, tp: TopicPartition, note: Vector<Pair<Instant, Long>>) {
+        fun read(offset: Long): ConsumerRecord<String, String>? {
+            val records = synchronized(consumer) {
+                consumer.seek(tp, offset)
+                consumer.poll(Duration.ofMillis(100))
+            }
+            note.add(Pair(Instant.now(), offset))
+            return records.firstOrNull()
+        }
+        val records = listOf(read(0), read(1), read(2), read(0))
         assertThat(records[0]?.offset()).isEqualTo(0)
         assertThat(records[1]?.offset()).isEqualTo(1)
         assertThat(records[2]?.offset()).isEqualTo(2)
