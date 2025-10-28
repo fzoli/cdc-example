@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CDC Debug</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 0; }
+      header { padding: 12px 16px; background: #0b5; color: #fff; }
+      header .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      main { padding: 12px 16px; }
+      #status { font-weight: 600; }
+      #controls { display: flex; gap: 8px; }
+      button { cursor: pointer; padding: 6px 10px; }
+      #messages { display: grid; gap: 10px; margin-top: 12px; }
+      pre { margin: 0; padding: 10px; background: #1112; border: 1px solid #0002; border-radius: 6px; overflow: auto; }
+      .meta { font-size: 12px; opacity: 0.8; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row">
+        <div>WebSocket: <span id="endpoint"></span></div>
+        <div>State: <span id="status">connecting...</span></div>
+        <div id="controls">
+          <button id="reconnect">Reconnect</button>
+          <button id="clear">Clear</button>
+        </div>
+      </div>
+    </header>
+    <main>
+      <div id="messages"></div>
+    </main>
+
+    <script>
+      (function () {
+        const statusEl = document.getElementById('status');
+        const endpointEl = document.getElementById('endpoint');
+        const messagesEl = document.getElementById('messages');
+        const reconnectBtn = document.getElementById('reconnect');
+        const clearBtn = document.getElementById('clear');
+
+        const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${wsProtocol}://${location.host}/ws/messages`;
+        endpointEl.textContent = wsUrl;
+
+        let ws;
+
+        function setStatus(text, color) {
+          statusEl.textContent = text;
+          if (color) {
+            statusEl.style.color = color;
+          } else {
+            statusEl.style.color = '';
+          }
+        }
+
+        function appendMessage(raw) {
+          let pretty = raw;
+          try {
+            const parsed = JSON.parse(raw);
+            pretty = JSON.stringify(parsed, null, 2);
+          } catch (_) {
+            // keep as raw text
+          }
+
+          const wrapper = document.createElement('div');
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          meta.textContent = new Date().toLocaleString();
+          const pre = document.createElement('pre');
+          pre.textContent = pretty;
+          wrapper.appendChild(meta);
+          wrapper.appendChild(pre);
+          messagesEl.appendChild(wrapper);
+          pre.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+
+        function connect() {
+          if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+            try { ws.close(); } catch (_) {}
+          }
+          setStatus('connecting...', '#ffd000');
+          ws = new WebSocket(wsUrl);
+          ws.onopen = function () { setStatus('connected', '#00e676'); };
+          ws.onmessage = function (event) { appendMessage(event.data); };
+          ws.onerror = function () { setStatus('error', '#ff5252'); };
+          ws.onclose = function () { setStatus('disconnected', '#ff9100'); };
+        }
+
+        reconnectBtn.addEventListener('click', connect);
+        clearBtn.addEventListener('click', function () { messagesEl.innerHTML = ''; });
+
+        connect();
+      })();
+    </script>
+  </body>
+</html>

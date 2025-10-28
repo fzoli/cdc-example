@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CDC Messages</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+      header { padding: 12px 16px; background: #0b5; color: #fff; }
+      header .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      main { padding: 16px; display: grid; gap: 16px; }
+      .panel { border: 1px solid #0002; border-radius: 8px; padding: 12px; background: #0001; }
+      .controls { display: grid; gap: 8px; grid-template-columns: 180px 1fr auto; align-items: end; }
+      label { font-size: 12px; opacity: 0.8; }
+      input[type="text"] { padding: 8px; border: 1px solid #0003; border-radius: 6px; width: 100%; }
+      button { padding: 8px 12px; border: 1px solid #0003; border-radius: 6px; background: #0b5; color: #fff; cursor: pointer; }
+      button.secondary { background: #555; }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .status { display: flex; gap: 12px; align-items: center; font-size: 14px; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+      .ok { background: #2e7d32; color: #fff; }
+      .warn { background: #f9a825; color: #000; }
+      .err { background: #c62828; color: #fff; }
+      .list { display: grid; gap: 8px; }
+      .item { display: grid; gap: 6px; border: 1px solid #0002; border-radius: 8px; padding: 10px; background: #1112; }
+      .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .meta { font-size: 12px; opacity: 0.85; }
+      .username { font-weight: 600; }
+      .message { white-space: pre-wrap; }
+      .controls-row { display: flex; gap: 8px; align-items: center; align-self: end; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row">
+        <div><strong>CDC Messages</strong></div>
+        <div class="status">
+          <span>Status:</span>
+          <span id="wsStatus" class="badge warn">connecting…</span>
+        </div>
+      </div>
+    </header>
+    <main>
+      <section class="panel">
+        <div class="controls">
+          <div>
+            <label for="nickname">Nickname</label>
+            <input id="nickname" type="text" placeholder="Your name" autocomplete="username" />
+          </div>
+          <div>
+            <label for="message">Message</label>
+            <input id="message" type="text" placeholder="Type a message and press Enter" />
+          </div>
+          <div class="controls-row">
+            <button id="send">Send</button>
+            <button id="reconnect" class="secondary">Reconnect</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="row" style="margin-bottom:8px">
+          <div><strong>Messages</strong></div>
+        </div>
+        <div id="list" class="list"></div>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        // Endpoints
+        const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+        const WS_URL = `${wsProtocol}://${location.host}/ws/messages`;
+        const API_BASE = `${location.origin}/api/messages`;
+
+        // Elements
+        const wsStatusEl = document.getElementById('wsStatus');
+        const nicknameEl = document.getElementById('nickname');
+        const messageEl = document.getElementById('message');
+        const sendBtn = document.getElementById('send');
+        const reconnectBtn = document.getElementById('reconnect');
+        const listEl = document.getElementById('list');
+
+        // State: id -> { id, createTime, updateTime, username, message }
+        const model = new Map();
+        let editingId = null; // when set, POST includes this id (upsert)
+        let ws;
+
+        function setWsStatus(text, cls) {
+          wsStatusEl.textContent = text;
+          wsStatusEl.className = `badge ${cls || ''}`.trim();
+        }
+
+        // Rendering
+        function render() {
+          const items = Array.from(model.values())
+            .sort((a, b) => new Date(b.createTime) - new Date(a.createTime));
+          listEl.innerHTML = '';
+          for (const m of items) {
+            const item = document.createElement('div');
+            item.className = 'item';
+            item.dataset.id = m.id;
+
+            const top = document.createElement('div');
+            top.className = 'row';
+            const left = document.createElement('div');
+            left.innerHTML = `<span class="username"></span> <span class="meta">• <time></time></span>`;
+            left.querySelector('.username').textContent = m.username;
+            const t = new Date(m.createTime);
+            left.querySelector('time').textContent = isNaN(t.valueOf()) ? `${m.createTime}` : t.toLocaleString();
+
+            const actions = document.createElement('div');
+            const edit = document.createElement('button');
+            edit.textContent = 'Edit';
+            edit.className = 'secondary';
+            edit.addEventListener('click', () => {
+              editingId = m.id;
+              messageEl.value = m.message || '';
+              messageEl.focus();
+            });
+
+            const del = document.createElement('button');
+            del.textContent = 'Delete';
+            del.className = 'secondary';
+            del.style.marginLeft = '6px';
+            del.addEventListener('click', () => {
+              if (editingId === m.id) {
+                editingId = null; // stop editing if the message is being deleted
+              }
+              deleteMessage(m.id);
+            });
+
+            actions.appendChild(edit);
+            actions.appendChild(del);
+
+            top.appendChild(left);
+            top.appendChild(actions);
+
+            const body = document.createElement('div');
+            body.className = 'message';
+            body.textContent = m.message;
+
+            item.appendChild(top);
+            item.appendChild(body);
+            listEl.appendChild(item);
+          }
+        }
+
+        // REST actions
+        async function sendMessage() {
+          const username = nicknameEl.value.trim();
+          const text = messageEl.value.trim();
+          if (!username || !text) return;
+          sendBtn.disabled = true;
+          try {
+            const res = await fetch(API_BASE, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify((() => { const p = { username, message: text }; if (editingId) p.id = editingId; return p; })())
+            });
+            if (!res.ok) {
+              const errText = await res.text().catch(() => '');
+              throw new Error(`POST failed: ${res.status} ${errText}`);
+            }
+            // We rely on the WebSocket UPSERT event to update UI
+            editingId = null; // subsequent sends are new messages
+            messageEl.value = '';
+            messageEl.focus();
+          } catch (e) {
+            alert(e.message || e);
+          } finally {
+            sendBtn.disabled = false;
+          }
+        }
+
+        async function deleteMessage(id) {
+          try {
+            const res = await fetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+            if (!res.ok && res.status !== 204) {
+              const errText = await res.text().catch(() => '');
+              throw new Error(`DELETE failed: ${res.status} ${errText}`);
+            }
+            // UI will be updated by WS DELETE; optimistic removal optional
+          } catch (e) {
+            alert(e.message || e);
+          }
+        }
+
+        // WS handling
+        function connect() {
+          if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+            try { ws.close(); } catch (_) {}
+          }
+          setWsStatus('connecting…', 'warn');
+          ws = new WebSocket(WS_URL);
+          ws.onopen = () => setWsStatus('connected', 'ok');
+          ws.onerror = () => setWsStatus('error', 'err');
+          ws.onclose = () => setWsStatus('disconnected', 'warn');
+          ws.onmessage = (event) => {
+            try {
+              const evt = JSON.parse(event.data);
+              if (!evt || !evt.type || !evt.id) return;
+              if (evt.type === 'UPSERT' && evt.content) {
+                model.set(evt.id, { id: evt.id, ...evt.content });
+                render();
+              } else if (evt.type === 'DELETE') {
+                model.delete(evt.id);
+                render();
+              }
+            } catch (_) {
+              // Ignore malformed messages
+            }
+          };
+        }
+
+        // Events
+        sendBtn.addEventListener('click', sendMessage);
+        messageEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            sendMessage();
+          }
+        });
+        reconnectBtn.addEventListener('click', connect);
+
+        // Init
+        connect();
+      })();
+    </script>
+  </body>
+</html>
