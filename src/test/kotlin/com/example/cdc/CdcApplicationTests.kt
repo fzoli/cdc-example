@@ -76,8 +76,17 @@ class CdcApplicationTests @Autowired constructor(
         fun KafkaConsumer<String, String>.read(tp: TopicPartition, offset: Long) {
             seek(tp, offset)
             val records = poll(Duration.ofMillis(100))
-            note.add(Pair(Instant.now(), offset))
-            println("Partition ${tp.partition()} read: ${records.count()} records")
+            val metrics = metrics()
+            fun getMetric(name: String): Double =
+                (metrics.entries.firstOrNull { it.key.name() == name }?.value?.metricValue() as? Double) ?: 0.0
+            val connections = getMetric("connection-count")
+            println("Connection count: $connections")
+            if (connections > 0) {
+                note.add(Pair(Instant.now(), offset))
+                println("Partition ${tp.partition()} read: ${records.count()} records")
+            } else {
+                println("Connection error")
+            }
         }
 
         val pool = KafkaConsumerPool(::createKafkaConsumer, poolSize = 5)
@@ -91,8 +100,13 @@ class CdcApplicationTests @Autowired constructor(
                         consumer.read(tp, 1L)
                         consumer.read(tp, 2L)
                         consumer.read(tp, 0L)
+                        // kafka.stop()
                     }
-                } finally {
+                }
+                catch (t: Throwable) {
+                    t.printStackTrace()
+                }
+                finally {
                     latch.countDown()
                 }
             }
