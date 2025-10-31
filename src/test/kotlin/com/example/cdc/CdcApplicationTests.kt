@@ -3,6 +3,8 @@ package com.example.cdc
 import com.example.cdc.service.message.MessageRequestDto
 import com.example.cdc.service.message.MessageService
 import org.apache.kafka.clients.consumer.KafkaConsumer
+import org.apache.kafka.clients.producer.KafkaProducer
+import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.TopicPartition
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -17,6 +19,7 @@ import java.util.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.Lock
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -55,8 +58,46 @@ class CdcApplicationTests @Autowired constructor(
         messageService.deleteMessage(id)
         assertThat(messageEventTestListener.awaitMessageDeleteById(id)).isTrue()
 
+        parallelWriteIsSafe()
         parallelRandomAccessIsSerial()
 	}
+
+    private fun parallelWriteIsSafe() {
+        val props = Properties().apply {
+            this["bootstrap.servers"] = "${kafka.host}:${kafka.getMappedPort(9092)}"
+            this["key.serializer"] = "org.apache.kafka.common.serialization.StringSerializer"
+            this["value.serializer"] = "org.apache.kafka.common.serialization.StringSerializer"
+            this["acks"] = "all"
+            this["enable.idempotence"] = "true"
+            this["max.in.flight.requests.per.connection"] = "1"
+            this["retries"] = "3"
+            this["linger.ms"] = "0"
+            this["batch.size"] = "16384"
+            this["compression.type"] = "none"
+            this["request.timeout.ms"] = "3000"
+            this["delivery.timeout.ms"] = "6000"
+            this["max.block.ms"] = "5000"
+            this["client.id"] = "test-producer"
+        }
+        val producer = KafkaProducer<String, String>(props)
+
+        val executor = Executors.newVirtualThreadPerTaskExecutor()
+        repeat(10) { j ->
+            executor.submit {
+                repeat(100) { i ->
+                    val record = ProducerRecord("test-topic", "key-$j-$i", "value-$j-$i")
+                    producer.send(record) { metadata, exception ->
+                        if (exception != null)
+                            println("Send $j-$i failed: ${exception.message}")
+                        else
+                            println("Sent $j-$i to partition ${metadata.partition()} offset ${metadata.offset()}")
+                    }
+                }
+            }
+        }
+        executor.awaitTermination(3, TimeUnit.SECONDS)
+        executor.shutdown()
+    }
 
     private fun parallelRandomAccessIsSerial() {
         fun createKafkaConsumer(): KafkaConsumer<String, String> {
