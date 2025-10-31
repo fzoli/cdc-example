@@ -159,14 +159,24 @@ class KafkaConsumerPool<K, V>(
                 pooled
             }
 
-            pooled.lock.withLock {
+            val (result, connectionCount) = pooled.lock.withLock {
                 if (assignments[topicPartition] != pooled) {
                     pooled.consumer.assign(listOf(topicPartition))
                     assignments.entries.removeIf { it.value == pooled }
                     assignments[topicPartition] = pooled
                 }
-                return block(pooled.consumer, topicPartition)
+                val result = block(pooled.consumer, topicPartition)
+                val connectionCount = pooled.readConnectionCount()
+                Pair(result, connectionCount)
             }
+
+            if (connectionCount == 0.0) {
+                lock.withLock {
+                    releasePooledConsumer(pooled)
+                }
+            }
+
+            return result
         } finally {
             semaphore.release()
         }
@@ -174,7 +184,7 @@ class KafkaConsumerPool<K, V>(
 
     fun close() {
         lock.withLock {
-            consumers.forEach { it.consumer.close() }
+            consumers.forEach { it.tryClose() }
             consumers.clear()
         }
     }
@@ -185,6 +195,27 @@ class KafkaConsumerPool<K, V>(
         consumers += pooledConsumer
         lastUsed[pooledConsumer] = System.nanoTime()
         return pooledConsumer
+    }
+
+    private fun releasePooledConsumer(pooled: PooledConsumer<K, V>) {
+        pooled.tryClose()
+        consumers.remove(pooled)
+        assignments.entries.removeIf { it.value == pooled }
+        lastUsed.remove(pooled)
+    }
+
+    private fun PooledConsumer<K, V>.tryClose() {
+        try {
+            consumer.close()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun PooledConsumer<K, V>.readConnectionCount(): Double {
+        val metrics = consumer.metrics()
+        fun getMetric(name: String): Double =
+            (metrics.entries.firstOrNull { it.key.name() == name }?.value?.metricValue() as? Double) ?: 0.0
+        return getMetric("connection-count")
     }
 
 }
