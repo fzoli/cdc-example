@@ -76,10 +76,7 @@ class CdcApplicationTests @Autowired constructor(
         fun KafkaConsumer<String, String>.read(tp: TopicPartition, offset: Long) {
             seek(tp, offset)
             val records = poll(Duration.ofMillis(100))
-            val metrics = metrics()
-            fun getMetric(name: String): Double =
-                (metrics.entries.firstOrNull { it.key.name() == name }?.value?.metricValue() as? Double) ?: 0.0
-            val connections = getMetric("connection-count")
+            val connections = readConnectionCount()
             println("Connection count: $connections")
             if (connections > 0) {
                 note.add(Pair(Instant.now(), offset))
@@ -166,7 +163,7 @@ class KafkaConsumerPool<K, V>(
                     assignments[topicPartition] = pooled
                 }
                 val result = block(pooled.consumer, topicPartition)
-                val connectionCount = pooled.readConnectionCount()
+                val connectionCount = pooled.consumer.readConnectionCount()
                 Pair(result, connectionCount)
             }
 
@@ -211,11 +208,11 @@ class KafkaConsumerPool<K, V>(
         }
     }
 
-    private fun PooledConsumer<K, V>.readConnectionCount(): Double {
-        val metrics = consumer.metrics()
-        fun getMetric(name: String): Double =
-            (metrics.entries.firstOrNull { it.key.name() == name }?.value?.metricValue() as? Double) ?: 0.0
-        return getMetric("connection-count")
-    }
+}
 
+fun <K, V> KafkaConsumer<K, V>.readConnectionCount(): Double {
+    val metrics = metrics()
+    fun getMetric(name: String): Double =
+        (metrics.entries.firstOrNull { it.key.name() == name }?.value?.metricValue() as? Double) ?: 0.0
+    return getMetric("connection-count")
 }
