@@ -1,13 +1,14 @@
 package com.example.cdc
 
 import org.junit.jupiter.api.Test
+import org.springframework.cache.Cache
+import org.springframework.data.redis.cache.RedisCacheConfiguration
+import org.springframework.data.redis.cache.RedisCacheManager
 import org.springframework.data.redis.connection.MessageListener
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.listener.ChannelTopic
 import org.springframework.data.redis.listener.RedisMessageListenerContainer
-import org.springframework.data.redis.cache.RedisCacheManager
-import org.springframework.data.redis.cache.RedisCacheConfiguration
 import org.springframework.data.redis.serializer.RedisSerializationContext
 import org.springframework.data.redis.serializer.RedisSerializer
 import org.testcontainers.containers.GenericContainer
@@ -15,11 +16,12 @@ import org.testcontainers.containers.Network
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import java.time.Duration
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -129,23 +131,17 @@ class RedisPubSubTests {
 
     @Test
     fun `cache bytearray performance benchmark`() {
-        val factory = LettuceConnectionFactory(keydb2.host, keydb2.getMappedPort(6379)).apply { afterPropertiesSet() }
+        val factory1 = LettuceConnectionFactory(keydb2.host, keydb2.getMappedPort(6379)).apply { afterPropertiesSet() }
+        val factory2 = LettuceConnectionFactory(keydb2.host, keydb2.getMappedPort(6379)).apply { afterPropertiesSet() }
+        val rr = RoundRobinCache(listOf(factory1, factory2))
         try {
-            val config = RedisCacheConfiguration.defaultCacheConfig()
-                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(RedisSerializer.byteArray()))
-                .entryTtl(Duration.ofSeconds(60))
-            val cacheManager = RedisCacheManager.builder(factory)
-                .cacheDefaults(config)
-                .build()
-
-            val cache = requireNotNull(cacheManager.getCache("bench-cache"))
-
             val valueSize = 1024 // 1 KB
             val value = ByteArray(valueSize) { (it % 251).toByte() }
 
             // Warmup
             repeat(5_000) { i ->
                 val k = "w$i"
+                val cache = rr.next()
                 cache.put(k, value)
                 cache.get(k, ByteArray::class.java)
             }
@@ -162,6 +158,7 @@ class RedisPubSubTests {
             repeat(threads) { t ->
                 Thread.startVirtualThread {
                     try {
+                        val cache = rr.next()
                         val rnd = ThreadLocalRandom.current()
                         var c = 0
                         repeat(opsPerThread) { i ->
@@ -196,7 +193,34 @@ class RedisPubSubTests {
             println("Cache byte[] benchmark: threads=$threads value=${valueSize}B totalOps=$totalOps elapsed=${"%.2f".format(elapsedSec)}s throughput=${"%.0f".format(opsPerSec)} ops/sec (put+get)")
             println("Latency ms: p50=${"%.3f".format(pct(50.0))} p95=${"%.3f".format(pct(95.0))} p99=${"%.3f".format(pct(99.0))}")
         } finally {
-            factory.destroy()
+            rr.close()
         }
     }
+}
+
+class RoundRobinCache(
+    private val factories: List<LettuceConnectionFactory>
+) : AutoCloseable {
+
+    private val counter = AtomicInteger(0)
+
+    private val caches = factories.map { factory ->
+        val config = RedisCacheConfiguration.defaultCacheConfig()
+            .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(RedisSerializer.byteArray()))
+            .entryTtl(Duration.ofSeconds(60))
+        val cacheManager = RedisCacheManager.builder(factory)
+            .cacheDefaults(config)
+            .build()
+        requireNotNull(cacheManager.getCache("bench-cache"))
+    }
+
+    fun next(): Cache {
+        val i = counter.getAndIncrement()
+        return caches[i % factories.size]
+    }
+
+    override fun close() {
+        factories.forEach { it.destroy() }
+    }
+
 }
