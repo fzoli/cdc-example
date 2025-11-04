@@ -39,6 +39,7 @@ dependencies {
 	testImplementation("org.testcontainers:junit-jupiter")
 	testImplementation("org.testcontainers:kafka")
 	testImplementation("org.testcontainers:postgresql")
+	testImplementation("net.spy:spymemcached:2.12.3")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
