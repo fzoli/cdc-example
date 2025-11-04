@@ -11,6 +11,7 @@ import org.springframework.data.redis.cache.RedisCacheConfiguration
 import org.springframework.data.redis.serializer.RedisSerializationContext
 import org.springframework.data.redis.serializer.RedisSerializer
 import org.testcontainers.containers.GenericContainer
+import org.testcontainers.containers.Network
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
@@ -26,15 +27,41 @@ import kotlin.test.assertTrue
 class RedisPubSubTests {
 
     companion object {
+        private val image = DockerImageName.parse("eqalpha/keydb:latest")
+        private val network = Network.newNetwork()
+
         @JvmStatic
         @Container
-        val redis: GenericContainer<*> = GenericContainer(DockerImageName.parse("eqalpha/keydb:latest")).withExposedPorts(6379)
+        val keydb1: GenericContainer<*> = GenericContainer(image)
+            .withExposedPorts(6379)
+            .withNetwork(network)
+            .withNetworkAliases("node1")
+            .withCommand(
+                "keydb-server",
+                "--port", "6379",
+                "--multi-master", "yes",
+                "--active-replica", "yes",
+                "--replicaof", "node2", "6379",
+            )
+        @JvmStatic
+        @Container
+        val keydb2: GenericContainer<*> = GenericContainer(image)
+            .withExposedPorts(6379)
+            .withNetwork(network)
+            .withNetworkAliases("node2")
+            .withCommand(
+                "keydb-server",
+                "--port", "6379",
+                "--multi-master", "yes",
+                "--active-replica", "yes",
+                "--replicaof", "node1", "6379",
+            )
     }
 
     @Test
     fun `pubsub should deliver message`() {
         val executor = Executors.newVirtualThreadPerTaskExecutor()
-        val factory = LettuceConnectionFactory(redis.host, redis.getMappedPort(6379)).apply { afterPropertiesSet() }
+        val factory = LettuceConnectionFactory(keydb1.host, keydb1.getMappedPort(6379)).apply { afterPropertiesSet() }
 
         val template = StringRedisTemplate(factory)
 
@@ -75,7 +102,7 @@ class RedisPubSubTests {
 
     @Test
     fun `cache put-get and ttl`() {
-        val factory = LettuceConnectionFactory(redis.host, redis.getMappedPort(6379)).apply { afterPropertiesSet() }
+        val factory = LettuceConnectionFactory(keydb1.host, keydb1.getMappedPort(6379)).apply { afterPropertiesSet() }
 
         try {
             val config = RedisCacheConfiguration.defaultCacheConfig()
@@ -102,7 +129,7 @@ class RedisPubSubTests {
 
     @Test
     fun `cache bytearray performance benchmark`() {
-        val factory = LettuceConnectionFactory(redis.host, redis.getMappedPort(6379)).apply { afterPropertiesSet() }
+        val factory = LettuceConnectionFactory(keydb2.host, keydb2.getMappedPort(6379)).apply { afterPropertiesSet() }
         try {
             val config = RedisCacheConfiguration.defaultCacheConfig()
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(RedisSerializer.byteArray()))
