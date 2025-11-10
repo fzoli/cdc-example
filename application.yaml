@@ -5,5 +5,5 @@ spring:
     password: postgres
   data:
     mongodb:
-      uri: mongodb://127.0.0.1:27017,127.0.0.1:27018,127.0.0.1:27019/testdb?replicaSet=myReplicaSet
+      uri: mongodb://127.0.0.1:27017/testdb?replicaSet=rs0
       database: testdb
