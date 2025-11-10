@@ -3,3 +3,7 @@ spring:
     url: jdbc:postgresql://localhost:5432/cdc
     username: postgres
     password: postgres
+  data:
+    mongodb:
+      uri: mongodb://127.0.0.1:27017,127.0.0.1:27018,127.0.0.1:27019/testdb?replicaSet=myReplicaSet
+      database: testdb

@@ -4,6 +4,7 @@ import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
 import org.springframework.context.annotation.Bean
 import org.testcontainers.containers.GenericContainer
+import org.testcontainers.containers.MongoDBContainer
 import org.testcontainers.containers.Network
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
@@ -25,6 +26,12 @@ class TestcontainersConfiguration {
         return KafkaContainer(DockerImageName.parse("apache/kafka-native:latest"))
             .withNetwork(network)
             .withNetworkAliases("kafka")
+    }
+
+    @Bean
+    @ServiceConnection
+    fun mongoContainer(): MongoDBContainer {
+        return MongoDBContainer(DockerImageName.parse("mongo:6.0"))
     }
 
     @Bean
