@@ -12,7 +12,7 @@ class DeviceController(private val repository: DeviceRepository) {
 
     @PostMapping("/devices")
     fun createDevice(): Device {
-        val device = Device(name = "A", status = Status.ONLINE, lastSeen = Instant.now())
+        val device = Device(fullName = "A", status = Status.ONLINE, lastSeen = Instant.now())
         repository.save(device)
         return device
     }

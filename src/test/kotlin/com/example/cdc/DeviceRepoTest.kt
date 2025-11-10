@@ -20,7 +20,7 @@ class DeviceRepoTest @Autowired constructor(
 
     @Test
     fun save() {
-        val device = Device(name = "A", status = Status.ONLINE, lastSeen = Instant.now())
+        val device = Device(fullName = "A", status = Status.ONLINE, lastSeen = Instant.now())
         repository.save(device)
         Assertions.assertEquals(1, repository.findAll().size)
     }

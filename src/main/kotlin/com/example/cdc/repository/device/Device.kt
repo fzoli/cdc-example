@@ -7,7 +7,9 @@ import java.time.Instant
 @Document("devices")
 data class Device(
     @Id val id: String? = null,
-    val name: String,
+    @Deprecated("Use fullName instead")
+    val name: String? = null,
+    val fullName: String,
     val status: Status,
     val lastSeen: Instant,
 )

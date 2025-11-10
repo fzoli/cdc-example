@@ -10,3 +10,6 @@ spring:
     consumer:
       group-id: messages-consumer-${system.hostname} # ${random.uuid} could be used as well to make each instance use a different group id
       auto-offset-reset: latest
+mongock:
+  migration-scan-package:
+    - com.example.cdc.migration
